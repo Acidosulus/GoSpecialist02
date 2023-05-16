@@ -70,9 +70,8 @@ func (self *TRouter) Index(w http.ResponseWriter, r *http.Request) {
 		Index   []TIndexDoc `json:"IndexDoc"`
 		Numbers TNumberData `json:"Numbers"`
 	}
-	fooIndex := []TIndexDoc{TIndexDoc{"/First", "Первое число"}, TIndexDoc{"/Second", "Второе число"}, TIndexDoc{"/Summa", "Сумма двух чисел"}}
 	var Answer TIndex
-	Answer.Index = fooIndex
+	Answer.Index = []TIndexDoc{TIndexDoc{"/First", "Первое число"}, TIndexDoc{"/Second", "Второе число"}, TIndexDoc{"/Summa", "Сумма двух чисел"}}
 	Answer.Numbers = self.Data
 	json.NewEncoder(w).Encode(Answer)
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 
@@ -13,68 +12,6 @@ import (
 
 // DB Driver visible to whole program
 var DB *sql.DB
-
-// StationResource holds information about locations
-type StationResource struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	OpeningTime string `json:"opening_time"`
-	ClosingTime string `json:"closing_time"`
-}
-
-// GetStation returns the station detail
-func GetStation(c *gin.Context) {
-	var station StationResource
-	id := c.Param("station_id")
-	err := DB.QueryRow("select ID, NAME, CAST(OPENING_TIME as CHAR), CAST(CLOSING_TIME as CHAR) from station where id=?", id).Scan(&station.ID, &station.Name, &station.OpeningTime, &station.ClosingTime)
-	if err != nil {
-		log.Println(err)
-		c.JSON(500, gin.H{
-			"error": err.Error(),
-		})
-	} else {
-		c.JSON(200, gin.H{
-			"result": station,
-		})
-	}
-}
-
-// CreateStation handles the POST
-func CreateStation(c *gin.Context) {
-	var station StationResource
-	// Parse the body into our resrource
-	if err := c.BindJSON(&station); err == nil {
-		// Format Time to Go time format
-		statement, _ := DB.Prepare("insert into station (NAME, OPENING_TIME, CLOSING_TIME) values (?, ?, ?)")
-		result, _ := statement.Exec(station.Name, station.OpeningTime, station.ClosingTime)
-		if err == nil {
-			newID, _ := result.LastInsertId()
-			station.ID = int(newID)
-			c.JSON(http.StatusOK, gin.H{
-				"result": station,
-			})
-		} else {
-			c.String(http.StatusInternalServerError, err.Error())
-		}
-	} else {
-		c.String(http.StatusInternalServerError, err.Error())
-	}
-}
-
-// RemoveStation handles the removing of resource
-func RemoveStation(c *gin.Context) {
-	id := c.Param("station-id")
-	statement, _ := DB.Prepare("delete from station where id=?")
-	_, err := statement.Exec(id)
-	if err != nil {
-		log.Println(err)
-		c.JSON(500, gin.H{
-			"error": err.Error(),
-		})
-	} else {
-		c.String(http.StatusOK, "")
-	}
-}
 
 // -------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -97,10 +34,6 @@ type TWORKINGTIME struct {
 // Добавление нового работника
 func PostEmployee(context *gin.Context) {
 	var employee, empl TEMPLOYEES
-
-	bts, _ := ioutil.ReadAll(context.Request.Body) //тело запроса
-	fmt.Println(string(bts))
-
 	if err := context.BindJSON(&employee); err == nil {
 		Database.QueryRow("select ID, FIO, DEPARTMENT, POSITION from EMPLOYEES where FIO=?", employee.FIO).Scan(&empl.ID, &empl.FIO, &empl.DEPARTMENT, &empl.POSITION)
 		if empl.ID != 0 {
@@ -127,14 +60,9 @@ func GetEmployeeByID(context *gin.Context) {
 	id := context.Param("employee_id")
 	err := Database.QueryRow("select ID, FIO, DEPARTMENT, POSITION from EMPLOYEES where id=?", id).Scan(&employee.ID, &employee.FIO, &employee.DEPARTMENT, &employee.POSITION)
 	if err != nil {
-		log.Println(err)
-		context.JSON(500, gin.H{
-			"error": err.Error(),
-		})
+		context.JSON(500, gin.H{"error": err.Error()})
 	} else {
-		context.JSON(200, gin.H{
-			"result": employee,
-		})
+		context.JSON(200, gin.H{"result": employee})
 	}
 
 }
@@ -147,7 +75,7 @@ func Init_data_Base() *sql.DB {
 	return db
 }
 
-// возвращает идентификато работника по его ФИО
+// возвращает идентификатор работника по его ФИО из БД
 func GetEmployeeIDbyFIO(fio string) (int, error) {
 	var empl TEMPLOYEES
 	Database.QueryRow("select ID, FIO, DEPARTMENT, POSITION from EMPLOYEES where FIO=?", fio).Scan(&empl.ID, &empl.FIO, &empl.DEPARTMENT, &empl.POSITION)
@@ -155,7 +83,28 @@ func GetEmployeeIDbyFIO(fio string) (int, error) {
 		return empl.ID, nil
 	} else {
 		return 0, fmt.Errorf("Не найдено ФИО работника")
+	}
+}
 
+// фиксирует начало работы работника с переданным ФИО
+func PostEmployeeIn(context *gin.Context) {
+	fio := context.Param("employee_fio")
+	workingtime_id, err := EmployeeIn(fio)
+	if err != nil {
+		context.JSON(500, gin.H{"error": err.Error()})
+	} else {
+		context.JSON(200, gin.H{"workingtime_id": workingtime_id})
+	}
+}
+
+// фиксирует конец работы работника с переданным ФИО
+func PostEmployeeOut(context *gin.Context) {
+	fio := context.Param("employee_fio")
+	workingtime_id, err := EmployeeOut(fio)
+	if err != nil {
+		context.JSON(500, gin.H{"error": err.Error()})
+	} else {
+		context.JSON(200, gin.H{"workingtime_id": workingtime_id})
 	}
 }
 
@@ -196,21 +145,52 @@ func EmployeeOut(fio string) (int, error) {
 	}
 }
 
+// возвращает количество дней, часов, минут по переданному количеству секунд, принимается, что в рабочем дне 8 часов
+func TimeIntervalsFromSeconds(seconds int) (days, hours, minutes int) {
+	days = seconds / (60 * 60 * 8)
+	hours = (seconds - (days * (60 * 60 * 8))) / (60 * 60)
+	minutes = (seconds - (days * (60 * 60 * 8)) - hours*(60*60)) / (60)
+	return days, hours, minutes
+}
+
+// Возвращает количество отработанного времени по ФИО работника и дата-времени начала и конца анализируемого периода
+func GetWorkingTime(context *gin.Context) {
+	employee_fio := context.Param("employee_fio")
+	date_from := context.Param("datetime_from")
+	date_to := context.Param("datetime_to")
+	var employee_id, seconds int
+	err := Database.QueryRow(`SELECT 
+								employee,
+								sum(Round((julianday(ifnull(OUT,DATETIME())) - julianday([IN]))*86400,0)) as SECONDS_DIFF -- сумма в секундах всех промежутков, на которых работник работал
+								from WORKINGTIME
+								where 	[IN]>=? and 
+										ifnull(OUT,DATETIME())<=? AND 
+										EMPLOYEE = (select id from EMPLOYEES where fio =? limit 1)
+								group by employee;`, date_from, date_to, employee_fio).Scan(&employee_id, &seconds)
+	days, hours, minutes := TimeIntervalsFromSeconds(seconds)
+	if err != nil {
+		context.JSON(500, gin.H{"error": err.Error()})
+	} else {
+		context.JSON(200, gin.H{"employee_fio": employee_fio,
+			"employee_id":          employee_id,
+			"total_seconds_worked": seconds,
+			"days_worked":          days,
+			"hours_worked":         hours,
+			"minutes_worked":       minutes})
+	}
+}
+
 var Database *sql.DB
 
 func main() {
-
 	Database = Init_data_Base()
-	fmt.Println(EmployeeIn("Зосимова Аркадия Ильинишна"))
-	fmt.Println(EmployeeOut("Зосимова Аркадия Ильинишна"))
-	fmt.Println("================================================================================================================================")
 
 	router := gin.Default()
-	// Add routes to REST verbs
-	router.GET("/v1/employee/:employee_id", GetEmployeeByID)
-	router.POST("/v1/employee", PostEmployee) //принимает добавляемы в базу данные в виден json
-	router.POST("/v1/in/:employee_fio", PostEmployee)
-	//r.DELETE("/v1/stations/:station_id", RemoveStation)
+	router.GET("/v1/employee/:employee_id", GetEmployeeByID)                             //возвращает ФИО работника оп его ID
+	router.POST("/v1/employee", PostEmployee)                                            //принимает добавляемые в базу данные в виде json
+	router.POST("/v1/in/:employee_fio", PostEmployeeIn)                                  //фиксирует начало работы работника с переданным ФИО
+	router.POST("/v1/out/:employee_fio", PostEmployeeOut)                                //фиксирует конец работы работника с переданным ФИО
+	router.GET("/v1/worktime/:employee_fio/:datetime_from/:datetime_to", GetWorkingTime) //получает фио работника и интервал на котором будет посчитано количество отработанного времени, возвращает json с общим количеством отработанных секунд и количеством отработанных 8часовых рабочих дней, и часов, минут
 
 	router.Run("127.0.0.1:8000")
 }

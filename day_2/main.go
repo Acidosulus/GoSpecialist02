@@ -180,6 +180,21 @@ func GetWorkingTime(context *gin.Context) {
 	}
 }
 
+func GetAllEmployees(context *gin.Context) {
+	var employees []TEMPLOYEES
+	var employee TEMPLOYEES
+	rows, err := Database.Query(`SELECT id,fio,department,position from employees order by id`)
+	if err != nil {
+		context.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	for rows.Next() {
+		rows.Scan(&employee.ID, &employee.FIO, &employee.DEPARTMENT, &employee.POSITION)
+		employees = append(employees, employee)
+	}
+	context.JSON(200, employees)
+}
+
 var Database *sql.DB
 
 func main() {
@@ -187,6 +202,7 @@ func main() {
 
 	router := gin.Default()
 	router.GET("/v1/employee/:employee_id", GetEmployeeByID)                             //возвращает ФИО работника оп его ID
+	router.GET("/v1/employees", GetAllEmployees)                                         //возвращает информацию обо всех работниках, в базе
 	router.POST("/v1/employee", PostEmployee)                                            //принимает добавляемые в базу данные в виде json
 	router.POST("/v1/in/:employee_fio", PostEmployeeIn)                                  //фиксирует начало работы работника с переданным ФИО
 	router.POST("/v1/out/:employee_fio", PostEmployeeOut)                                //фиксирует конец работы работника с переданным ФИО
